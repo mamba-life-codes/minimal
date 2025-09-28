@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Telegram Mini App</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'tg-bg': 'var(--tg-theme-bg-color, #ffffff)',
+                        'tg-text': 'var(--tg-theme-text-color, #000000)',
+                        'tg-hint': 'var(--tg-theme-hint-color, #999999)',
+                        'tg-link': 'var(--tg-theme-link-color, #007bff)',
+                        'tg-button': 'var(--tg-theme-button-color, #5288c0)',
+                        'tg-button-text': 'var(--tg-theme-button-text-color, #ffffff)',
+                        'tg-secondary-bg': 'var(--tg-theme-secondary-bg-color, #f4f4f4)',
+                    },
+                },
+            },
+        }
+    </script>
+    <!-- React CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="p-4 transition-colors duration-300" style="background-color: var(--tg-theme-bg-color, #ffffff); color: var(--tg-theme-text-color, #000000); font-family: 'Inter', sans-serif;">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // Custom Hook to manage Telegram WebApp state
+        const useTelegram = () => {
+            const WebApp = window.Telegram.WebApp;
+            const initData = WebApp.initData;
+            const userData = WebApp.initDataUnsafe.user || {};
+
+            const [themeParams, setThemeParams] = useState({
+                bg_color: '#ffffff',
+                text_color: '#000000',
+                button_color: '#5288c0',
+            });
+
+            useEffect(() => {
+                if (WebApp.ready) {
+                    WebApp.ready();
+                    // Apply current Telegram theme colors
+                    const params = WebApp.themeParams;
+                    setThemeParams({
+                        bg_color: params.bg_color || '#ffffff',
+                        text_color: params.text_color || '#000000',
+                        button_color: params.button_color || '#5288c0',
+                    });
+
+                    // Set up Main Button (optional but good practice)
+                    WebApp.MainButton.setParams({
+                        text: 'SUBMIT DATA',
+                        color: params.button_color,
+                        text_color: params.button_text_color || '#ffffff',
+                        is_visible: true,
+                        is_active: true,
+                    });
+                } else {
+                    console.error("Telegram WebApp not initialized.");
+                }
+            }, []);
+
+            return { WebApp, initData, userData, themeParams };
+        };
+
+        const App = () => {
+            const { WebApp, initData, userData, themeParams } = useTelegram();
+            const [message, setMessage] = useState('');
+            const [status, setStatus] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleMainButtonClick = useCallback(async () => {
+                if (!message.trim()) {
+                    WebApp.HapticFeedback.notificationOccurred('error');
+                    // We use WebApp.showAlert instead of standard browser alert()
+                    WebApp.showAlert('Please enter a message before submitting.'); 
+                    return;
+                }
+
+                setIsLoading(true);
+                setStatus('Sending data to backend...');
+
+                const payload = {
+                    message: message,
+                    timestamp: new Date().toISOString()
+                };
+
+                // --- Mini App -> Backend Communication ---
+                try {
+                    const response = await fetch('/api/submit_data', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            initData: initData, // REQUIRED for backend validation
+                            payload: payload,
+                        }),
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok) {
+                        setStatus(`✅ Success! Backend response: ${result.message}`);
+                        WebApp.HapticFeedback.notificationOccurred('success');
+                        
+                        // Optional: Show the Main Button to close the app after success
+                        WebApp.MainButton.setText('CLOSE APP');
+                        WebApp.MainButton.onClick(() => WebApp.close());
+                        WebApp.MainButton.show(); // Ensure it's visible if not already
+
+                    } else {
+                        setStatus(`❌ Error: ${result.message || 'Submission failed.'}`);
+                        WebApp.HapticFeedback.notificationOccurred('error');
+                    }
+
+                } catch (error) {
+                    console.error('API Error:', error);
+                    setStatus(`⚠️ Network Error: Could not reach the server.`);
+                    WebApp.HapticFeedback.notificationOccurred('error');
+                } finally {
+                    setIsLoading(false);
+                }
+            }, [message, initData, WebApp]);
+
+            // Connect Main Button to the handler
+            useEffect(() => {
+                if (WebApp.MainButton) {
+                    WebApp.MainButton.onClick(handleMainButtonClick);
+                }
+                return () => {
+                    if (WebApp.MainButton) {
+                        WebApp.MainButton.offClick(handleMainButtonClick);
+                    }
+                };
+            }, [handleMainButtonClick, WebApp.MainButton]);
+
+
+            // Apply theme colors via inline style for easy access
+            const cardStyle = {
+                backgroundColor: themeParams.bg_color,
+                color: themeParams.text_color,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            };
+            
+            const buttonStyle = {
+                backgroundColor: themeParams.button_color,
+                color: themeParams.button_text_color || '#ffffff',
+                transition: 'background-color 0.3s',
+            };
+
+            return (
+                <div 
+                    className="p-4 sm:p-6 max-w-lg mx-auto rounded-xl shadow-2xl mt-4" 
+                    style={cardStyle}
+                >
+                    <h1 className="text-xl font-bold mb-4 border-b pb-2" style={{borderColor: themeParams.text_color + '33'}}>
+                        Telegram Mini App Blueprint
+                    </h1>
+
+                    {/* Initialization Data Display */}
+                    <div className="mb-6 p-3 rounded-lg bg-tg-secondary-bg text-sm">
+                        <p className="font-semibold" style={{color: themeParams.text_color}}>
+                            Welcome, {userData.first_name || 'User'}!
+                        </p>
+                        <p className="text-tg-hint">
+                            Telegram User ID: <span style={{color: themeParams.text_color}}>{userData.id || 'N/A (Testing outside Mini App)'}</span>
+                        </p>
+                        <p className="text-xs italic text-tg-hint">
+                            (This data was passed by Telegram on initialization.)
+                        </p>
+                    </div>
+
+                    {/* Data Submission Form */}
+                    <div className="mb-6">
+                        <label 
+                            htmlFor="message" 
+                            className="block text-sm font-medium mb-2" 
+                            style={{color: themeParams.text_color}}
+                        >
+                            Message to Send to Bot/Backend:
+                        </label>
+                        <textarea
+                            id="message"
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                            rows="3"
+                            className="w-full p-3 rounded-lg border focus:ring-2 focus:ring-tg-link outline-none"
+                            style={{ 
+                                backgroundColor: themeParams.bg_color,
+                                color: themeParams.text_color,
+                                borderColor: themeParams.text_color + '33',
+                            }}
+                            placeholder="Enter a message to be processed by the Node.js backend..."
+                            disabled={isLoading}
+                        />
+                    </div>
+
+                    {/* Status Display */}
+                    {isLoading && (
+                        <div className="text-center p-3 text-sm font-medium animate-pulse" style={{color: themeParams.link_color}}>
+                            Processing request...
+                        </div>
+                    )}
+
+                    {status && (
+                        <div className="mt-4 p-3 rounded-lg bg-tg-secondary-bg text-sm break-words">
+                            <p style={{color: themeParams.text_color}}>{status}</p>
+                        </div>
+                    )}
+                    
+                    {/* Note on Main Button */}
+                    <p className="mt-6 text-xs text-center text-tg-hint">
+                        Note: Submission is handled by Telegram's Main Button at the bottom.
+                    </p>
+                </div>
+            );
+        };
+
+        // --- React 18 Fix: Use createRoot instead of render ---
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
